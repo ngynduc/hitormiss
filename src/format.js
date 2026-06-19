@@ -2,7 +2,7 @@
  * Format helpers for Discord messages.
  */
 const { EmbedBuilder } = require('discord.js');
-const { CORRECT, PRESENT, ABSENT } = require('./wordle');
+const { CORRECT, PRESENT, ABSENT, getStatus } = require('./wordle');
 
 const KEYBOARD_ROWS = [
   'QWERTYUIOP'.split(''),
@@ -42,7 +42,7 @@ function buildBoardEmbed(challenge, guesses, status, emojiMap) {
     const pad = ' '.repeat(ri);
     const keys = row.map(letter => {
       const lower = letter.toLowerCase();
-      const st = letterState[lower];
+      const st = getStatus(letterState, lower);
       if (st === CORRECT) return emojiMap[`${lower}_green`] || '🟩';
       if (st === PRESENT) return emojiMap[`${lower}_yellow`] || '🟨';
       if (st === ABSENT)  return emojiMap[`${lower}_gray`] || '⬛';

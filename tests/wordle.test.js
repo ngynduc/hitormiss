@@ -124,100 +124,117 @@ describe('evaluate', () => {
 });
 
 // --- computeScore() ---
+// Signature: computeScore(result, guess, answer, prevLetterState)
+// Results are derived from evaluate() so guess/answer stay consistent.
 
 describe('computeScore', () => {
+  // Helper: score a (guess, answer) pair against prior state.
+  const score = (guess, answer, prev = {}) =>
+    computeScore(evaluate(guess, answer), guess, answer, prev);
+
   test('all absent → 0 points', () => {
-    const { delta } = computeScore(
-      Array(7).fill(ABSENT), 'zzzzzzz', {}
-    );
-    expect(delta).toBe(0);
+    expect(score('xxxxx', 'brain').delta).toBe(0);
   });
 
-  test('new green → +2 per letter', () => {
-    const { delta } = computeScore(
-      [CORRECT, CORRECT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'disable', {}
-    );
-    expect(delta).toBe(4); // d + i
+  test('new green → +2 per letter (two greens → +4)', () => {
+    // answer discab: d@0 green, i@1 green, x's absent
+    expect(score('dixxxx', 'discab').delta).toBe(4);
   });
 
   test('new yellow → +1 per letter', () => {
-    const { delta } = computeScore(
-      [PRESENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'abandon', {}
-    );
-    expect(delta).toBe(1); // a is new yellow
+    // answer apple; pleas → p,l,e,a all yellow (4 distinct letters)
+    expect(score('pleas', 'apple').delta).toBe(4);
   });
 
   test('yellow → green upgrade → +1', () => {
-    const prev = { d: PRESENT };
-    const { delta } = computeScore(
-      [CORRECT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'discard', prev
-    );
-    expect(delta).toBe(1); // d upgraded from yellow to green
+    const answer = 'drain';
+    const s1 = score('lader', answer); // d yellow
+    expect(score('dxxxx', answer, s1.newLetterState).delta).toBe(1); // d → green
   });
 
   test('new green directly → +2 (not +1 yellow + 1 green)', () => {
-    const { delta } = computeScore(
-      [CORRECT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'discord', {}
-    );
-    expect(delta).toBe(2);
+    expect(score('dxxxxx', 'discab').delta).toBe(2);
   });
 
   test('already green → 0', () => {
-    const prev = { d: CORRECT };
-    const { delta } = computeScore(
-      [CORRECT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'discord', prev
-    );
-    expect(delta).toBe(0);
+    const answer = 'drain';
+    const s1 = score('dxxxx', answer);
+    expect(score('dxxxx', answer, s1.newLetterState).delta).toBe(0);
   });
 
-  test('already yellow → 0', () => {
-    const prev = { d: PRESENT };
-    const { delta } = computeScore(
-      [PRESENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'discard', prev
-    );
-    expect(delta).toBe(0);
+  test('already yellow → 0 (no new instance)', () => {
+    const answer = 'brain';
+    const s1 = score('xxxxa', answer); // a yellow
+    expect(score('xxxxa', answer, s1.newLetterState).delta).toBe(0);
   });
 
-  test('mixed: new yellow + new green + upgrade', () => {
-    // State: d is yellow, everything else unknown
-    const prev = { d: PRESENT };
-    // Result for "discord" where d=green, i=green, rest unknown
-    const result = [CORRECT, CORRECT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT];
-    // d: PRESENT → CORRECT = +1
-    // i: undefined → CORRECT = +2
-    const { delta } = computeScore(result, 'discord', prev);
-    expect(delta).toBe(3);
+  test('mixed: upgrade +1 + new green +2', () => {
+    const answer = 'discab';
+    const s1 = score('xdxxxx', answer); // d yellow
+    // d upgrade +1, i new green +2
+    expect(score('dixxxx', answer, s1.newLetterState).delta).toBe(3);
   });
 
   test('accumulates state across calls', () => {
+    const answer = 'discab';
     let state = {};
-    // Guess 1: d is yellow
-    const r1 = computeScore(
-      [PRESENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'discard', state
-    );
+    const r1 = score('xdxxxx', answer, state); // d yellow
     expect(r1.delta).toBe(1);
     state = r1.newLetterState;
-
-    // Guess 2: d is green, i is yellow
-    const r2 = computeScore(
-      [CORRECT, PRESENT, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'discord', state
-    );
-    expect(r2.delta).toBe(2); // d upgrade +1, i new yellow +1
+    const r2 = score('dixixx', answer, state); // d upgrade +1, i green +2
+    expect(r2.delta).toBe(3);
     state = r2.newLetterState;
+    const r3 = score('disxxx', answer, state); // s new green +2 (d,i already green)
+    expect(r3.delta).toBe(2);
+  });
 
-    // Guess 3: d green (already), i green (upgrade), s new green
-    const r3 = computeScore(
-      [CORRECT, CORRECT, CORRECT, ABSENT, ABSENT, ABSENT, ABSENT],
-      'disable', state
-    );
-    expect(r3.delta).toBe(3); // d nope(0), i upgrade(+1), s new(+2)
+  describe('duplicate-letter handling (the bug fix)', () => {
+    // Answer BOOT has 'o' twice (positions 2,3).
+    const ANSWER = 'boot';
+
+    test('word → o green new → +2', () => {
+      expect(score('word', ANSWER).delta).toBe(2);
+    });
+
+    test('mono → 2nd o revealed as yellow → +1 (was +0 before fix)', () => {
+      const s1 = score('word', ANSWER);
+      expect(score('mono', ANSWER, s1.newLetterState).delta).toBe(1);
+    });
+
+    test('loop → 2nd o upgraded yellow→green → +1', () => {
+      let state = score('word', ANSWER).newLetterState;
+      state = score('mono', ANSWER, state).newLetterState;
+      expect(score('loop', ANSWER, state).delta).toBe(1);
+    });
+
+    test('hook → 2nd o already green → +0', () => {
+      let state = score('word', ANSWER).newLetterState;
+      state = score('mono', ANSWER, state).newLetterState;
+      state = score('loop', ANSWER, state).newLetterState;
+      expect(score('hook', ANSWER, state).delta).toBe(0);
+    });
+
+    test('both o instances discovered green in one guess → +4', () => {
+      // oooo: pos2,3 green (2 new instances × +2)
+      expect(score('oooo', ANSWER).delta).toBe(4);
+    });
+
+    test('full boot sequence → deltas 2,1,1,0', () => {
+      let state = {};
+      const out = [];
+      for (const guess of ['word', 'mono', 'loop', 'hook']) {
+        const r = score(guess, ANSWER, state);
+        out.push(r.delta);
+        state = r.newLetterState;
+      }
+      expect(out).toEqual([2, 1, 1, 0]);
+    });
+  });
+
+  test('legacy string state is migrated without crashing', () => {
+    // Old shape { o: 'correct' } has no positions; first green re-scores once.
+    const legacy = { o: CORRECT };
+    // mono vs boot: o@pos2 green (migrated slot, +2) + o@pos4 yellow (+1)
+    expect(score('mono', 'boot', legacy).delta).toBe(3);
   });
 });
