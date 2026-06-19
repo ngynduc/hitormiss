@@ -134,7 +134,7 @@ function processGuess(channelId, userId, userName, guessRaw) {
 
   const result = evaluate(guess, challenge.answer);
   const prevLetterState = challenge.letter_state || {};
-  const { delta, newLetterState } = computeScore(result, guess, prevLetterState);
+  const { delta, newLetterState } = computeScore(result, guess, challenge.answer, prevLetterState);
 
   const solved = result.every(r => r === 'correct');
 

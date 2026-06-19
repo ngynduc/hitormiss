@@ -40,48 +40,112 @@ function evaluate(guess, answer) {
 }
 
 /**
- * Compute incremental score delta for a single guess.
+ * Read a letter's best-known status out of a letter-state map.
+ * Accepts both legacy string values ("correct") and the rich object form
+ * ({ s, g, y }) produced by computeScore.
+ */
+function getStatus(letterState, letter) {
+  const v = letterState[letter];
+  if (v == null) return undefined;
+  return typeof v === 'string' ? v : v.s;
+}
+
+/**
+ * Normalise + deep-clone a letter-state map into the rich object form.
+ * Legacy string values ("correct") become { s, g:[], y:0 } — positions are
+ * unknown, so the next green at any position is treated as new (acceptable
+ * one-time drift when migrating an in-flight challenge).
+ */
+function normalizeState(prev) {
+  const out = {};
+  for (const [letter, v] of Object.entries(prev || {})) {
+    if (typeof v === 'string') {
+      out[letter] = { s: v, g: [], y: 0 };
+    } else if (v && typeof v === 'object') {
+      out[letter] = { s: v.s, g: [...(v.g || [])], y: v.y || 0 };
+    }
+  }
+  return out;
+}
+
+function countOccurrences(str, ch) {
+  let n = 0;
+  for (let i = 0; i < str.length; i++) if (str[i] === ch) n++;
+  return n;
+}
+
+/**
+ * Compute incremental score delta for a single guess, with proper
+ * duplicate-letter (multiplicity) handling.
+ *
+ * Per letter we track:
+ *   s — best-known status (correct > present > absent) for keyboard display
+ *   g — positions where the letter is confirmed green
+ *   y — count of confirmed-present instances not yet pinned to a green slot
+ *
+ * `answer` is required to know how many copies of a letter exist, so that
+ * discovering a 2nd/3rd instance of a duplicated letter scores correctly.
+ *
+ * Rules (RULES_TEXT):
+ *   new green letter  → +2
+ *   new yellow letter → +1
+ *   yellow → green upgrade → +1
  *
  * @param {string[]} result  - Array of 'correct'|'present'|'absent'
- * @param {object}   prevLetterState  - Map<letter, 'correct'|'present'|undefined>
- *   Tracks the best known state for each letter across all prior guesses in
- *   the current challenge.
+ * @param {string}   guess   - the guess (case-insensitive)
+ * @param {string}   answer  - the answer (case-insensitive)
+ * @param {object}   prevLetterState - prior rich/legacy letter-state map
  * @returns {{ delta: number, newLetterState: object }}
  */
-function computeScore(result, guess, prevLetterState) {
+function computeScore(result, guess, answer, prevLetterState) {
   const g = guess.toLowerCase();
-  const state = { ...prevLetterState };
+  const a = answer.toLowerCase();
+  const state = normalizeState(prevLetterState);
   let delta = 0;
 
   for (let i = 0; i < result.length; i++) {
     const letter = g[i];
     const outcome = result[i];
-    const prev = state[letter];
+    const st = state[letter] || { s: undefined, g: [], y: 0 };
+    const answerCount = countOccurrences(a, letter);
 
     if (outcome === CORRECT) {
-      if (!prev || prev === ABSENT) {
-        // New green → +2
-        delta += 2;
-        state[letter] = CORRECT;
-      } else if (prev === PRESENT) {
-        // Yellow → green upgrade → +1
+      if (st.g.includes(i)) {
+        // Same green position already known → no new info.
+      } else if (st.y > 0) {
+        // Pin a previously-yellow instance to this position → upgrade +1.
+        st.y -= 1;
+        st.g.push(i);
+        st.s = CORRECT;
         delta += 1;
-        state[letter] = CORRECT;
+      } else if (st.g.length + st.y < answerCount) {
+        // Brand-new instance, placed green → +2.
+        st.g.push(i);
+        st.s = CORRECT;
+        delta += 2;
+      } else {
+        // No unclaimed instance left; record position without points.
+        st.g.push(i);
+        st.s = CORRECT;
       }
     } else if (outcome === PRESENT) {
-      if (!prev || prev === ABSENT) {
-        // New yellow → +1
+      if (st.g.length + st.y < answerCount) {
+        // Reveals an additional present instance → +1.
+        st.y += 1;
+        if (st.s !== CORRECT) st.s = PRESENT;
         delta += 1;
-        state[letter] = PRESENT;
+      } else {
+        // All instances already known → redundant yellow.
+        if (st.s !== CORRECT) st.s = PRESENT;
       }
     } else if (outcome === ABSENT) {
-      if (!prev) {
-        state[letter] = ABSENT;
-      }
+      if (!st.s) st.s = ABSENT;
     }
+
+    state[letter] = st;
   }
 
   return { delta, newLetterState: state };
 }
 
-module.exports = { evaluate, computeScore, CORRECT, PRESENT, ABSENT };
+module.exports = { evaluate, computeScore, getStatus, CORRECT, PRESENT, ABSENT };
