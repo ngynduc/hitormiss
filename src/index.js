@@ -7,7 +7,7 @@ const fs = require('fs');
 
 const db = require('./db');
 const game = require('./game');
-const { buildBoardEmbed, formatLeaderboard, RULES_TEXT, formatTimeout } = require('./format');
+const { buildBoardEmbed, formatLeaderboard, RULES_TEXT, formatTimeout, formatBonusFound, formatBonusOutcome } = require('./format');
 
 // Ensure data dir exists
 const dataDir = path.join(__dirname, '..', 'data');
@@ -97,6 +97,29 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
+  if (content.toLowerCase() === '?unregister') {
+    // Clean up any active challenge before parting
+    if (activeChannels.has(channelId)) {
+      const old = db.getActiveChallenge(channelId);
+      if (old) {
+        db.timeoutChallenge(old.id);
+        game.finalizeChallenge(old.id, channelId, false);
+        if (old.board_message_id) {
+          try {
+            const boardMsg = await msg.channel.messages.fetch(old.board_message_id);
+            await boardMsg.delete();
+          } catch { /* already gone */ }
+        }
+      }
+      activeChannels.delete(channelId);
+    }
+
+    registeredChannels.delete(channelId);
+    db.unregisterChannel(channelId);
+
+    return msg.reply('👋 Channel unregistered. No new challenges will start here. Use `?start` to re-enable.');
+  }
+
   // --- Guess ---
   if (!registeredChannels.has(channelId)) {
     return msg.reply('❌ This channel isn\'t set up yet. Use `?start` first!');
@@ -117,11 +140,17 @@ client.on('messageCreate', async (msg) => {
     lastActivity: Date.now(),
   });
 
+  // Announce secret bonus word find
+  if (result.bonusFound) {
+    try { await msg.channel.send(formatBonusFound(msg.author.username)); } catch { /* ignore */ }
+  }
+
   // If solved, finalize
   if (result.solved) {
     game.awardSolveBonus(result.challenge.id, channelId);
     game.finalizeChallenge(result.challenge.id, channelId, true);
     activeChannels.delete(channelId);
+    await sendBonusOutcome(msg.channel, result.challenge.id);
   }
 
   // Inject updated letter state into challenge object for board display
@@ -185,6 +214,8 @@ function startScheduler() {
             }
           } catch { /* ignore */ }
           sendToChannel(channelId, formatTimeout(old.answer));
+          const bonus = game.getBonusOutcome(old.id);
+          if (bonus) sendToChannel(channelId, formatBonusOutcome(bonus));
         }
         activeChannels.delete(channelId);
       }
@@ -223,6 +254,13 @@ async function sendToChannel(channelId, content) {
   } catch (err) {
     console.error(`Failed to send to channel ${channelId}:`, err.message);
   }
+}
+
+/** Reveal the secret bonus word outcome at end of a challenge. */
+async function sendBonusOutcome(channel, challengeId) {
+  const bonus = game.getBonusOutcome(challengeId);
+  if (!bonus) return;
+  try { await channel.send(formatBonusOutcome(bonus)); } catch { /* ignore */ }
 }
 
 // --- Start ---
