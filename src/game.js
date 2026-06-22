@@ -9,6 +9,7 @@ const db = require('./db');
 const CHALLENGE_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const GUESS_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes between guesses per user
 const MAX_GUESSES = 10;
+const BONUS_POINTS = 4; // secret bonus word, first finder only
 
 /**
  * Get the active challenge for a channel (if any).
@@ -28,9 +29,17 @@ function getActiveChallenge(channelId) {
  */
 function startNewChallenge(channelId) {
   const answer = getRandomWord();
+  let bonusWord = getRandomWord(answer, { minSharedLetters: 2 });
+  if (!bonusWord || ![...new Set(bonusWord)].some(letter => answer.includes(letter))) {
+    bonusWord = getRandomWord(answer, { minSharedLetters: 1 });
+  }
   const now = Date.now();
-  const id = db.createChallenge(channelId, answer, now);
-  return { id, channel_id: channelId, answer, started_at: now, letter_state: {}, solved: 0, board_message_id: null };
+  const id = db.createChallenge(channelId, answer, now, bonusWord);
+  return {
+    id, channel_id: channelId, answer, started_at: now,
+    letter_state: {}, solved: 0, board_message_id: null,
+    bonus_word: bonusWord, bonus_found_by: null,
+  };
 }
 
 function getLastGuessTime(challengeId) {
@@ -134,19 +143,31 @@ function processGuess(channelId, userId, userName, guessRaw) {
 
   const result = evaluate(guess, challenge.answer);
   const prevLetterState = challenge.letter_state || {};
-  const { delta, newLetterState } = computeScore(result, guess, challenge.answer, prevLetterState);
+  const { delta: baseDelta, newLetterState } = computeScore(result, guess, challenge.answer, prevLetterState);
 
   const solved = result.every(r => r === 'correct');
 
+  // Secret bonus word: first finder gets +4, folded into this guess's delta.
+  let bonusFound = false;
+  let scoreDelta = baseDelta;
+  if (challenge.bonus_word && !challenge.bonus_found_by && guess === challenge.bonus_word) {
+    scoreDelta += BONUS_POINTS;
+    db.markBonusFound(challenge.id, userId);
+    bonusFound = true;
+  }
+
   // Persist
-  db.addGuess(challenge.id, userId, userName, guess, result, delta, newLetterState);
+  db.addGuess(challenge.id, userId, userName, guess, result, scoreDelta, newLetterState);
   db.updateLetterState(challenge.id, newLetterState);
 
   if (solved) {
     db.solveChallenge(challenge.id, userId);
   }
 
-  return { result, scoreDelta: delta, solved, letterState: newLetterState, challenge };
+  return {
+    result, scoreDelta, solved, letterState: newLetterState, challenge,
+    bonusFound, bonusWord: challenge.bonus_word,
+  };
 }
 
 /**
@@ -188,6 +209,21 @@ function finalizeChallenge(challengeId, channelId, solved) {
   }
 }
 
+/**
+ * Resolve the secret-bonus outcome for a challenge (for end-of-challenge reveal).
+ * Returns { word, foundByName } or null if the challenge has no bonus word.
+ */
+function getBonusOutcome(challengeId) {
+  const row = db.getDb().prepare(`
+    SELECT bonus_word, bonus_found_by FROM challenges WHERE id = ?
+  `).get(challengeId);
+  if (!row || !row.bonus_word) return null;
+  const foundByName = row.bonus_found_by
+    ? db.getUserNameInChallenge(challengeId, row.bonus_found_by)
+    : null;
+  return { word: row.bonus_word, foundByName };
+}
+
 module.exports = {
   getActiveChallenge,
   startNewChallenge,
@@ -195,7 +231,9 @@ module.exports = {
   processGuess,
   awardSolveBonus,
   finalizeChallenge,
+  getBonusOutcome,
   getNextChallengeTime,
   CHALLENGE_INTERVAL_MS,
   MAX_GUESSES,
+  BONUS_POINTS,
 };

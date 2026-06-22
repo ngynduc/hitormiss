@@ -121,6 +121,7 @@ const RULES_TEXT = `**🟩 Co-Wordle Rules 🟩**
 • +1 pt for finding a **new yellow** letter
 • +1 pt for upgrading a yellow → green
 • +2 pts to **all participants** when solved
+• **+4 pts** to the first to guess the **secret bonus word** (one per challenge)
 
 Work together to crack the word!`;
 
@@ -128,9 +129,24 @@ function formatTimeout(answer) {
   return `⏰ **Challenge timed out!** The word was **${answer.toUpperCase()}**.\nBetter luck next time!`;
 }
 
+/** Immediate announce when a user finds the secret bonus word. */
+function formatBonusFound(userName) {
+  return `🎁 **@${userName}** found the secret bonus word! **+4 pts**`;
+}
+
+/** End-of-challenge reveal of the secret bonus word. */
+function formatBonusOutcome({ word, foundByName }) {
+  if (foundByName) {
+    return `🎁 **Secret bonus word** \`${word.toUpperCase()}\` was snagged by **@${foundByName}**! (+4 pts)`;
+  }
+  return `🎁 **Secret bonus word** was \`${word.toUpperCase()}\` — nobody found it this round!`;
+}
+
 module.exports = {
   buildBoardEmbed,
   formatLeaderboard,
   RULES_TEXT,
   formatTimeout,
+  formatBonusFound,
+  formatBonusOutcome,
 };

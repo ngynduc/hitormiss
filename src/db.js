@@ -27,7 +27,9 @@ function init(dbPath) {
       solved_at       INTEGER,
       timed_out       INTEGER NOT NULL DEFAULT 0,
       letter_state    TEXT NOT NULL DEFAULT '{}',
-      board_message_id TEXT
+      board_message_id TEXT,
+      bonus_word      TEXT,
+      bonus_found_by  TEXT
     );
 
     CREATE TABLE IF NOT EXISTS guesses (
@@ -60,10 +62,16 @@ function init(dbPath) {
     CREATE INDEX IF NOT EXISTS idx_guesses_challenge ON guesses(challenge_id);
   `);
 
-  // Migrate: add board_message_id if missing (existing DBs)
+  // Migrate: add columns if missing (existing DBs)
   const cols = getDb().prepare("PRAGMA table_info(challenges)").all().map(c => c.name);
   if (!cols.includes('board_message_id')) {
     getDb().exec('ALTER TABLE challenges ADD COLUMN board_message_id TEXT');
+  }
+  if (!cols.includes('bonus_word')) {
+    getDb().exec('ALTER TABLE challenges ADD COLUMN bonus_word TEXT');
+  }
+  if (!cols.includes('bonus_found_by')) {
+    getDb().exec('ALTER TABLE challenges ADD COLUMN bonus_found_by TEXT');
   }
 
   return db;
@@ -76,12 +84,12 @@ function getDb() {
 
 // --- Challenge CRUD ---
 
-function createChallenge(channelId, answer, startedAt) {
+function createChallenge(channelId, answer, startedAt, bonusWord) {
   const stmt = getDb().prepare(`
-    INSERT INTO challenges (channel_id, answer, started_at, letter_state)
-    VALUES (?, ?, ?, '{}')
+    INSERT INTO challenges (channel_id, answer, started_at, letter_state, bonus_word)
+    VALUES (?, ?, ?, '{}', ?)
   `);
-  return stmt.run(channelId, answer, startedAt).lastInsertRowid;
+  return stmt.run(channelId, answer, startedAt, bonusWord || null).lastInsertRowid;
 }
 
 function getActiveChallenge(channelId) {
@@ -116,6 +124,27 @@ function setBoardMessageId(challengeId, messageId) {
   getDb().prepare(`
     UPDATE challenges SET board_message_id = ? WHERE id = ?
   `).run(messageId, challengeId);
+}
+
+/**
+ * Mark the secret bonus word as found by a user (first finder locks it).
+ * No-op if already found by someone else.
+ */
+function markBonusFound(challengeId, userId) {
+  getDb().prepare(`
+    UPDATE challenges SET bonus_found_by = ? WHERE id = ? AND bonus_found_by IS NULL
+  `).run(userId, challengeId);
+}
+
+/**
+ * Resolve a participant's display name within a challenge (from their guesses).
+ */
+function getUserNameInChallenge(challengeId, userId) {
+  const row = getDb().prepare(`
+    SELECT user_name FROM guesses WHERE challenge_id = ? AND user_id = ?
+    ORDER BY created_at DESC LIMIT 1
+  `).get(challengeId, userId);
+  return row ? row.user_name : null;
 }
 
 // --- Guesses ---
@@ -189,11 +218,15 @@ function getRegisteredChannels() {
   return getDb().prepare('SELECT channel_id FROM registered_channels').all().map(r => r.channel_id);
 }
 
+function unregisterChannel(channelId) {
+  getDb().prepare('DELETE FROM registered_channels WHERE channel_id = ?').run(channelId);
+}
+
 module.exports = {
   init, getDb,
   createChallenge, getActiveChallenge, solveChallenge, timeoutChallenge, updateLetterState,
-  setBoardMessageId,
+  setBoardMessageId, markBonusFound, getUserNameInChallenge,
   addGuess, getGuessesForChallenge, getGuessCount, getParticipantCount, getParticipantUserIds,
   addToLeaderboard, getLeaderboard,
-  registerChannel, getRegisteredChannels,
+  registerChannel, getRegisteredChannels, unregisterChannel,
 };
