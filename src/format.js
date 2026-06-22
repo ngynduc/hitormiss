@@ -120,7 +120,7 @@ const RULES_TEXT = `**🟩 Co-Wordle Rules 🟩**
 • +2 pts for finding a **new green** letter
 • +1 pt for finding a **new yellow** letter
 • +1 pt for upgrading a yellow → green
-• +2 pts to **all participants** when solved
+• +2 pts to **all participants** each round
 • **+4 pts** to the first to guess the **secret bonus word** (one per challenge)
 
 Work together to crack the word!`;

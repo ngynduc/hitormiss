@@ -147,7 +147,6 @@ client.on('messageCreate', async (msg) => {
 
   // If solved, finalize
   if (result.solved) {
-    game.awardSolveBonus(result.challenge.id, channelId);
     game.finalizeChallenge(result.challenge.id, channelId, true);
     activeChannels.delete(channelId);
     await sendBonusOutcome(msg.channel, result.challenge.id);

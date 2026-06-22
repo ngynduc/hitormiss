@@ -9,6 +9,7 @@ const db = require('./db');
 const CHALLENGE_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const GUESS_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes between guesses per user
 const MAX_GUESSES = 10;
+const PARTICIPATION_POINTS = 2; // awarded once per round participant
 const BONUS_POINTS = 4; // secret bonus word, first finder only
 
 /**
@@ -171,26 +172,6 @@ function processGuess(channelId, userId, userName, guessRaw) {
 }
 
 /**
- * Award solve bonus (+2) to all participants when challenge is solved.
- * Called after processGuess returns solved=true.
- */
-function awardSolveBonus(challengeId, channelId) {
-  const participants = db.getParticipantUserIds(challengeId);
-  const guessRows = db.getGuessesForChallenge(challengeId);
-  const nameMap = {};
-  for (const g of guessRows) {
-    if (!nameMap[g.user_id]) nameMap[g.user_id] = g.user_name;
-  }
-
-  for (const uid of participants) {
-    db.getDb().prepare(`
-      UPDATE leaderboard SET score = score + 2 WHERE user_id = ? AND channel_id = ?
-    `).run(uid, channelId);
-  }
-  return { participants, nameMap };
-}
-
-/**
  * Finalize a challenge (add all participants to leaderboard).
  * Called when challenge ends (solved or timed out).
  */
@@ -205,7 +186,7 @@ function finalizeChallenge(challengeId, channelId, solved) {
   }
 
   for (const [uid, info] of seen) {
-    db.addToLeaderboard(uid, channelId, info.name, info.totalScore, solved);
+    db.addToLeaderboard(uid, channelId, info.name, info.totalScore + PARTICIPATION_POINTS, solved);
   }
 }
 
@@ -229,11 +210,11 @@ module.exports = {
   startNewChallenge,
   shouldStartChallenge,
   processGuess,
-  awardSolveBonus,
   finalizeChallenge,
   getBonusOutcome,
   getNextChallengeTime,
   CHALLENGE_INTERVAL_MS,
   MAX_GUESSES,
+  PARTICIPATION_POINTS,
   BONUS_POINTS,
 };
